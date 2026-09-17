@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0a4d2e" />
+  <title>탁구 대회 대진표</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="felt">
+    <div class="table-line table-line-h"></div>
+    <div class="table-line table-line-v"></div>
+    <div class="net" aria-hidden="true"></div>
+  </div>
+
+  <header class="top no-print">
+    <div class="brand">
+      <span class="ball" aria-hidden="true"></span>
+      <h1>탁구 대회</h1>
+    </div>
+    <div class="stats" id="stats"></div>
+  </header>
+
+  <nav class="steps no-print" aria-label="진행 단계">
+    <button type="button" class="step-btn is-active" data-step="1"><span class="step-num">1</span>멤버</button>
+    <button type="button" class="step-btn" data-step="2"><span class="step-num">2</span>에이스</button>
+    <button type="button" class="step-btn" data-step="3"><span class="step-num">3</span>팀</button>
+    <button type="button" class="step-btn" data-step="4"><span class="step-num">4</span>대진</button>
+    <button type="button" class="step-btn" data-step="5"><span class="step-num">5</span>점수</button>
+  </nav>
+
+  <main>
+    <section id="panel-1" class="panel is-visible" data-panel="1">
+      <div class="panel-head">
+        <h2>멤버</h2>
+        <p>학급은 번호 순입니다. 외부 사람만 추가하세요.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <h3>학급 명단</h3>
+          <span class="pill" id="class-count"></span>
+        </div>
+        <div id="class-list" class="chip-grid"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <h3>외부 인원</h3>
+          <span class="pill" id="extra-count"></span>
+        </div>
+        <form id="extra-form" class="add-row">
+          <label class="sr-only" for="extra-name">외부 인원 이름</label>
+          <input id="extra-name" type="text" maxlength="20" placeholder="이름 입력" autocomplete="off" />
+          <button type="submit" class="btn btn-primary">추가</button>
+        </form>
+        <div id="extra-list" class="chip-grid"></div>
+        <p id="extra-empty" class="hint">아직 없습니다.</p>
+      </div>
+
+      <div class="panel-nav no-print">
+        <span></span>
+        <button type="button" class="btn btn-primary" data-goto="2">에이스 →</button>
+      </div>
+    </section>
+
+    <section id="panel-2" class="panel" data-panel="2">
+      <div class="panel-head">
+        <h2>에이스</h2>
+        <p>팀마다 에이스 1명. 고른 수만큼 팀이 생깁니다.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <h3>에이스 고르기</h3>
+          <span class="pill" id="ace-count"></span>
+        </div>
+        <div id="ace-list" class="chip-grid ace-grid"></div>
+        <p id="ace-warning" class="banner warn hidden"></p>
+      </div>
+
+      <div class="panel-nav no-print">
+        <button type="button" class="btn btn-ghost" data-goto="1">← 멤버</button>
+        <button type="button" class="btn btn-primary" data-goto="3">팀 →</button>
+      </div>
+    </section>
+
+    <section id="panel-3" class="panel" data-panel="3">
+      <div class="panel-head">
+        <h2>팀</h2>
+        <p>한 팀 1~3명. 만들면 무작위로 섞입니다.</p>
+      </div>
+
+      <div class="toolbar no-print">
+        <button type="button" class="btn btn-primary" id="gen-teams-btn">팀 만들기</button>
+        <button type="button" class="btn btn-ghost hidden" id="solo-leftover-btn">남은 사람 1인 팀</button>
+      </div>
+
+      <p id="team-banner" class="banner hidden"></p>
+      <div id="team-board" class="team-board"></div>
+
+      <div id="unused-card" class="card unused-card hidden" data-drop="unused">
+        <div class="card-title">
+          <h3>미배정</h3>
+          <span class="pill" id="unused-count"></span>
+        </div>
+        <div id="unused-list" class="chip-grid drop-zone" data-drop="unused"></div>
+        <p id="unused-empty" class="hint">모두 팀에 들어갔습니다.</p>
+      </div>
+
+      <div class="panel-nav no-print">
+        <button type="button" class="btn btn-ghost" data-goto="2">← 에이스</button>
+        <button type="button" class="btn btn-primary" data-goto="4">대진 →</button>
+      </div>
+    </section>
+
+    <section id="panel-4" class="panel" data-panel="4">
+      <div class="panel-head print-head">
+        <h2>대진표</h2>
+        <p class="no-print">승자를 누르면 올라갑니다. 점수판으로 기록할 수도 있어요.</p>
+      </div>
+
+      <div class="toolbar no-print">
+        <button type="button" class="btn btn-primary" id="gen-bracket-btn">대진표 만들기</button>
+        <button type="button" class="btn btn-ghost" id="reset-winners-btn">승자 초기화</button>
+        <button type="button" class="btn btn-ghost" id="print-btn">인쇄</button>
+        <button type="button" class="btn btn-orange" id="open-scoreboard-btn">점수판</button>
+      </div>
+
+      <p id="bracket-banner" class="banner hidden"></p>
+      <div id="champion" class="champion hidden"></div>
+      <div id="bracket" class="bracket"></div>
+      <p id="bracket-empty" class="hint">팀을 만든 뒤 대진표를 만드세요.</p>
+
+      <div class="panel-nav no-print">
+        <button type="button" class="btn btn-ghost" data-goto="3">← 팀</button>
+        <button type="button" class="btn btn-primary" data-goto="5">점수 →</button>
+      </div>
+    </section>
+
+    <section id="panel-5" class="panel" data-panel="5">
+      <div class="panel-head">
+        <h2>점수판</h2>
+        <p>11점제, 2점 차. 서브는 2점마다, 듀스 이후 1점마다 바뀝니다.</p>
+      </div>
+
+      <div class="toolbar no-print">
+        <label class="sb-format-label" for="sb-format">방식</label>
+        <select id="sb-format" class="sb-select">
+          <option value="3">3판 2선승</option>
+          <option value="5">5판 3선승</option>
+        </select>
+        <button type="button" class="btn btn-ghost" id="sb-swap-serve">서브 변경</button>
+        <button type="button" class="btn btn-ghost" id="sb-undo">한 점 취소</button>
+        <button type="button" class="btn btn-ghost" id="sb-reset">초기화</button>
+        <button type="button" class="btn btn-ghost" id="sb-standalone-btn">자유 경기</button>
+      </div>
+
+      <p id="sb-banner" class="banner hidden"></p>
+      <div id="sb-setup" class="card"></div>
+      <div id="sb-board"></div>
+      <p class="hint no-print sb-keys">A/← 왼쪽 · D/→ 오른쪽 · Backspace 취소</p>
+
+      <div class="panel-nav no-print">
+        <button type="button" class="btn btn-ghost" data-goto="4">← 대진</button>
+        <button type="button" class="btn btn-primary" id="sb-apply-winner">승자 반영</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot no-print">이 브라우저에만 저장됩니다.</footer>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>
