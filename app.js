@@ -10,17 +10,16 @@
   const STORAGE_KEY = "pingpong-bracket-v1";
   const MAX_TEAM = 3;
   const GAME_POINT = 11;
+  const RETIRED_NAMES = ["임"];
 
   const state = {
     extras: [],
-    aces: [],
     teams: [],
     unused: [],
     bracket: null,
     scoreboard: defaultScoreboard(),
     step: 1,
-    selected: null,
-    aceSnapshot: ""
+    selected: null
   };
 
   let idSeq = 1;
@@ -30,6 +29,14 @@
   function uid() {
     idSeq += 1;
     return "t" + idSeq;
+  }
+
+  function isRetired(name) {
+    return RETIRED_NAMES.includes(name);
+  }
+
+  function keepPerson(name) {
+    return typeof name === "string" && name.trim() && !isRetired(name);
   }
 
   function allMembers() {
@@ -194,7 +201,6 @@
         return {
           id: team.id,
           name: team.name,
-          ace: team.ace,
           members: team.members
         };
       }
@@ -202,7 +208,6 @@
     return {
       id: null,
       name: (side === "a" ? board.customA : board.customB) || (side === "a" ? "A팀" : "B팀"),
-      ace: "",
       members: []
     };
   }
@@ -253,25 +258,26 @@
     }
   }
 
-  function aceKey() {
-    return state.aces.slice().sort().join("|");
-  }
-
-  function teamsStale() {
-    return state.teams.length > 0 && state.aceSnapshot !== aceKey();
+  function migrateStep(data) {
+    const raw = data.step;
+    if (typeof raw !== "number") return 1;
+    if (Array.isArray(data.aces)) {
+      const map = { 1: 1, 2: 2, 3: 2, 4: 3, 5: 4 };
+      return map[raw] || 1;
+    }
+    if (raw >= 1 && raw <= 4) return raw;
+    return 1;
   }
 
   function save() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         extras: state.extras,
-        aces: state.aces.filter((n) => allMembers().includes(n)),
         teams: state.teams,
         unused: state.unused,
         bracket: state.bracket,
         scoreboard: state.scoreboard,
         step: state.step,
-        aceSnapshot: state.aceSnapshot,
         idSeq
       }));
     } catch (err) {
@@ -285,18 +291,22 @@
       if (!raw) return;
       const data = JSON.parse(raw);
       if (Array.isArray(data.extras)) {
-        state.extras = data.extras.filter((n) => typeof n === "string" && n.trim() && !CLASS_MEMBERS.includes(n));
+        state.extras = unique(data.extras.filter((n) => keepPerson(n) && !CLASS_MEMBERS.includes(n)));
       }
       const members = allMembers();
-      if (Array.isArray(data.aces)) {
-        state.aces = unique(data.aces.filter((n) => members.includes(n)));
+      if (Array.isArray(data.teams)) {
+        state.teams = data.teams.map((team) => ({
+          id: typeof team.id === "string" ? team.id : uid(),
+          name: typeof team.name === "string" && team.name.trim() ? team.name : "팀",
+          members: unique((Array.isArray(team.members) ? team.members : []).filter(keepPerson))
+        }));
       }
-      if (Array.isArray(data.teams)) state.teams = data.teams;
-      if (Array.isArray(data.unused)) state.unused = data.unused.filter((n) => members.includes(n));
+      if (Array.isArray(data.unused)) {
+        state.unused = unique(data.unused.filter((n) => keepPerson(n) && members.includes(n)));
+      }
       if (data.bracket) state.bracket = data.bracket;
       if (data.scoreboard) state.scoreboard = sanitizeScoreboard(data.scoreboard);
-      if (data.step >= 1 && data.step <= 5) state.step = data.step;
-      if (typeof data.aceSnapshot === "string") state.aceSnapshot = data.aceSnapshot;
+      state.step = migrateStep(data);
       if (typeof data.idSeq === "number") idSeq = data.idSeq;
       pruneMissingPeople();
       pruneScoreboards();
@@ -311,13 +321,16 @@
 
   function pruneMissingPeople() {
     const members = allMembers();
-    state.aces = state.aces.filter((n) => members.includes(n));
-    state.unused = state.unused.filter((n) => members.includes(n));
+    state.extras = unique(state.extras.filter((n) => keepPerson(n) && !CLASS_MEMBERS.includes(n)));
+    state.unused = unique(state.unused.filter((n) => keepPerson(n) && members.includes(n)));
+    const before = state.teams.length;
     state.teams.forEach((team) => {
-      team.members = team.members.filter((n) => members.includes(n));
-      if (!members.includes(team.ace)) team.ace = team.members[0] || "";
+      team.members = unique((team.members || []).filter((n) => keepPerson(n) && members.includes(n)));
     });
-    state.teams = state.teams.filter((team) => team.ace && team.members.includes(team.ace));
+    state.teams = state.teams.filter((team) => team.members.length > 0);
+    if (state.teams.length !== before) {
+      state.bracket = null;
+    }
   }
 
   function toast(message, kind) {
@@ -340,6 +353,10 @@
       toast("이름을 입력하세요.", "warn");
       return;
     }
+    if (isRetired(name)) {
+      toast("이 이름은 명단에서 빠졌습니다.", "warn");
+      return;
+    }
     if (allMembers().includes(name)) {
       toast("이미 있는 이름입니다.", "warn");
       return;
@@ -354,19 +371,13 @@
   function removeExtra(name) {
     if (isClass(name)) return;
     state.extras = state.extras.filter((n) => n !== name);
-    state.aces = state.aces.filter((n) => n !== name);
     state.unused = state.unused.filter((n) => n !== name);
+    const before = state.teams.length;
     state.teams.forEach((team) => {
       team.members = team.members.filter((n) => n !== name);
     });
-    const dissolved = state.teams.filter((team) => team.ace === name);
-    if (dissolved.length) {
-      dissolved.forEach((team) => {
-        team.members.filter((n) => n !== name).forEach((n) => {
-          if (!state.unused.includes(n) && !state.aces.includes(n)) state.unused.push(n);
-        });
-      });
-      state.teams = state.teams.filter((team) => team.ace !== name);
+    state.teams = state.teams.filter((team) => team.members.length > 0);
+    if (state.teams.length !== before) {
       state.bracket = null;
       pruneScoreboards();
     }
@@ -376,81 +387,42 @@
     toast(name + " 님을 목록에서 뺐습니다.");
   }
 
-  function toggleAce(name) {
-    if (!allMembers().includes(name)) return;
-    if (state.aces.includes(name)) {
-      state.aces = state.aces.filter((n) => n !== name);
-    } else {
-      state.aces.push(name);
-    }
-    save();
-    render();
-  }
-
   function teamById(id) {
     return state.teams.find((t) => t.id === id);
   }
 
-  function findTeamOf(name) {
-    return state.teams.find((t) => t.members.includes(name));
-  }
-
-  function generateTeams(keepAceTeams) {
-    const members = allMembers();
-    const aces = unique(state.aces.filter((n) => members.includes(n)));
-    if (aces.length < 1) {
-      toast("에이스를 한 명 이상 선택하세요.", "warn");
+  function generateTeams() {
+    const members = allMembers().filter(keepPerson);
+    if (!members.length) {
+      toast("참가 멤버가 없습니다.", "warn");
       return;
     }
 
-    const keep = !!(keepAceTeams && state.teams.length);
-    const existingAces = keep
-      ? state.teams.map((t) => t.ace).filter((n) => aces.includes(n))
-      : [];
-    const usedAces = keep
-      ? existingAces.concat(aces.filter((n) => !existingAces.includes(n)))
-      : shuffle(aces.slice());
-
-    const remaining = shuffle(members.filter((n) => !usedAces.includes(n)));
-    const maxExtra = usedAces.length * (MAX_TEAM - 1);
-    const leftovers = remaining.slice(maxExtra);
-    const pool = remaining.slice(0, maxExtra);
-
-    const names = keep
-      ? Object.fromEntries(state.teams.map((t) => [t.ace, t.name]))
-      : {};
-
-    const teams = usedAces.map((ace) => ({
-      id: uid(),
-      name: names[ace] || (ace + " 팀"),
-      ace,
-      members: [ace]
-    }));
-
-    const assignOrder = shuffle(teams.slice());
-    const extraEach = Math.floor(pool.length / teams.length);
-    const bonus = pool.length % teams.length;
+    const shuffled = shuffle(members);
+    const teamCount = Math.ceil(shuffled.length / MAX_TEAM);
+    const extraEach = Math.floor(shuffled.length / teamCount);
+    const bonus = shuffled.length % teamCount;
+    const teams = [];
     let idx = 0;
-    assignOrder.forEach((team, i) => {
+    for (let i = 0; i < teamCount; i++) {
       const take = extraEach + (i < bonus ? 1 : 0);
-      team.members = [team.ace].concat(pool.slice(idx, idx + take));
+      const group = shuffled.slice(idx, idx + take);
       idx += take;
-    });
+      teams.push({
+        id: uid(),
+        name: group[0] + " 팀",
+        members: group
+      });
+    }
 
     state.teams = shuffle(teams);
-    state.unused = leftovers;
+    state.unused = [];
     state.bracket = null;
     pruneScoreboards();
-    state.aceSnapshot = aceKey();
     state.selected = null;
     save();
     render();
-
-    if (leftovers.length) {
-      toast("팀을 섞었습니다. 미배정 " + leftovers.length + "명이 남았습니다.");
-    } else {
-      toast("팀을 무작위로 구성했습니다.", "ok");
-    }
+    toast("팀을 무작위로 구성했습니다.", "ok");
   }
 
   function promoteLeftovers() {
@@ -460,31 +432,25 @@
       return;
     }
     leftovers.forEach((name) => {
-      if (!state.aces.includes(name)) state.aces.push(name);
-      if (findTeamOf(name)) {
-        const prev = findTeamOf(name);
-        if (prev.ace !== name) prev.members = prev.members.filter((n) => n !== name);
-      }
+      state.teams.forEach((team) => {
+        team.members = team.members.filter((n) => n !== name);
+      });
       state.teams.push({
         id: uid(),
         name: name + " 팀",
-        ace: name,
         members: [name]
       });
     });
+    state.teams = state.teams.filter((team) => team.members.length > 0);
     state.unused = [];
     state.bracket = null;
     pruneScoreboards();
-    state.aceSnapshot = aceKey();
     save();
     render();
     toast(leftovers.length + "개의 1인 팀을 만들었습니다.", "ok");
   }
 
   function canMove(name, targetTeamId) {
-    if (state.aces.includes(name)) {
-      return { ok: false, reason: "에이스는 팀에서 옮길 수 없습니다." };
-    }
     if (targetTeamId === "unused") return { ok: true };
     const team = teamById(targetTeamId);
     if (!team) return { ok: false, reason: "팀을 찾을 수 없습니다." };
@@ -511,6 +477,7 @@
       teamById(targetTeamId).members.push(name);
     }
 
+    state.teams = state.teams.filter((team) => team.members.length > 0);
     state.selected = null;
     state.bracket = null;
     pruneScoreboards();
@@ -520,10 +487,6 @@
   }
 
   function onMemberClick(name) {
-    if (state.aces.includes(name) && findTeamOf(name)) {
-      toast("에이스는 각 팀에 고정됩니다.", "warn");
-      return;
-    }
     if (state.selected === name) {
       state.selected = null;
       render();
@@ -541,7 +504,7 @@
   function renameTeam(id, name) {
     const team = teamById(id);
     if (!team) return;
-    const next = name.trim() || (team.ace + " 팀");
+    const next = name.trim() || (team.members[0] ? team.members[0] + " 팀" : "팀");
     team.name = next;
     save();
   }
@@ -549,10 +512,6 @@
   function buildBracket() {
     if (state.teams.length < 2) {
       toast("대진표에는 팀이 2개 이상 필요합니다.", "warn");
-      return;
-    }
-    if (teamsStale()) {
-      toast("에이스가 바뀌었습니다. 팀을 다시 구성하세요.", "warn");
       return;
     }
     const oversize = state.teams.some((t) => t.members.length < 1 || t.members.length > MAX_TEAM);
@@ -788,7 +747,7 @@
         format: state.scoreboard.format
       });
     }
-    setStep(5);
+    setStep(4);
   }
 
   function openScoreboardForMatch(roundIndex, matchIndex) {
@@ -816,7 +775,7 @@
       points: prev ? prev.points.slice() : []
     });
     state.scoreboard.active = key;
-    setStep(5);
+    setStep(4);
   }
 
   function applyWinnerToBracket() {
@@ -918,19 +877,13 @@
   function memberChip(name, options) {
     const opts = options || {};
     const selected = state.selected === name ? " is-selected" : "";
-    const ace = state.aces.includes(name) ? " is-ace" : "";
     const extra = isClass(name) ? " is-class" : " is-extra";
-    const locked = opts.locked ? " is-locked" : "";
-    const draggable = opts.draggable && !opts.locked ? "true" : "false";
+    const draggable = opts.draggable ? "true" : "false";
     const remove = opts.removable
       ? '<button type="button" class="chip-x" data-remove="' + escapeHtml(name) + '" aria-label="삭제">×</button>'
       : "";
-    const check = opts.check
-      ? '<input class="ace-check" type="checkbox" data-ace="' + escapeHtml(name) + '"' + (state.aces.includes(name) ? " checked" : "") + " />"
-      : "";
     return (
-      '<span class="chip' + extra + ace + selected + locked + '" draggable="' + draggable + '" data-name="' + escapeHtml(name) + '">' +
-      check +
+      '<span class="chip' + extra + selected + '" draggable="' + draggable + '" data-name="' + escapeHtml(name) + '">' +
       '<span class="num">' + classNumber(name) + "</span>" +
       '<span>' + escapeHtml(name) + "</span>" +
       remove +
@@ -950,7 +903,6 @@
     const members = allMembers();
     const parts = [
       stat("참가", members.length + "명"),
-      stat("에이스", state.aces.length + "명"),
       stat("팀", state.teams.length + "개")
     ];
     if (state.unused.length) parts.push(stat("미배정", state.unused.length + "명"));
@@ -980,44 +932,14 @@
     document.getElementById("extra-empty").classList.toggle("hidden", state.extras.length > 0);
   }
 
-  function renderAces() {
-    const members = allMembers();
-    document.getElementById("ace-count").textContent = state.aces.length + "명 / " + members.length + "명";
-    document.getElementById("ace-list").innerHTML = members.map((n) => memberChip(n, { check: true })).join("");
-    const warn = document.getElementById("ace-warning");
-    if (state.aces.length < 2) {
-      warn.textContent = "팀이 2개 이상 필요해요. 지금 " + state.aces.length + "명.";
-      warn.classList.remove("hidden");
-    } else {
-      const leftover = Math.max(0, members.length - state.aces.length * MAX_TEAM);
-      if (leftover) {
-        warn.textContent = leftover + "명은 3명 정원에 안 들어갑니다. 에이스를 더 고르거나 1인 팀으로 만드세요.";
-        warn.classList.remove("hidden");
-      } else {
-        warn.classList.add("hidden");
-      }
-    }
-  }
-
   function renderTeams() {
     const banner = document.getElementById("team-banner");
-    const members = allMembers();
-    const maxPeople = state.aces.length * MAX_TEAM;
 
-    if (state.aces.length < 1) {
-      banner.textContent = "먼저 에이스를 선택하세요.";
-      banner.className = "banner warn";
-    } else if (!state.teams.length) {
+    if (!state.teams.length) {
       banner.textContent = "";
       banner.className = "banner hidden";
-    } else if (teamsStale()) {
-      banner.textContent = "에이스가 바뀌었습니다. 팀을 다시 섞으세요.";
-      banner.className = "banner warn";
     } else if (state.unused.length) {
-      banner.textContent = "미배정 " + state.unused.length + "명. 에이스를 더 고르거나 1인 팀으로 만드세요.";
-      banner.className = "banner warn";
-    } else if (members.length > maxPeople && !state.teams.length) {
-      banner.textContent = "인원이 정원보다 많습니다.";
+      banner.textContent = "미배정 " + state.unused.length + "명. 팀에 넣거나 1인 팀으로 만드세요.";
       banner.className = "banner warn";
     } else {
       banner.textContent = "";
@@ -1032,14 +954,12 @@
     document.getElementById("unused-card").classList.toggle("hidden", !state.teams.length);
 
     document.getElementById("team-board").innerHTML = state.teams.map((team) => {
-      const others = team.members.filter((n) => n !== team.ace);
       return (
         '<article class="team-card" data-team="' + team.id + '">' +
         '<input class="team-name" data-rename="' + team.id + '" value="' + escapeHtml(team.name) + '" maxlength="20" />' +
-        '<div class="ace-row"><span class="ace-star">★</span>에이스 ' + escapeHtml(team.ace) + "</div>" +
         '<div class="team-members drop-zone" data-drop="' + team.id + '">' +
-        others.map((n) => memberChip(n, { draggable: true })).join("") +
-        (others.length ? "" : '<span class="hint">클릭해서 넣기</span>') +
+        team.members.map((n) => memberChip(n, { draggable: true })).join("") +
+        (team.members.length ? "" : '<span class="hint">클릭해서 넣기</span>') +
         "</div>" +
         '<div class="team-meta">' + team.members.length + " / " + MAX_TEAM + "명</div>" +
         "</article>"
@@ -1047,7 +967,7 @@
     }).join("");
 
     document.getElementById("unused-count").textContent = state.unused.length + "명";
-    document.getElementById("unused-list").innerHTML = state.unused.map((n) => memberChip(n, { draggable: !state.aces.includes(n) })).join("");
+    document.getElementById("unused-list").innerHTML = state.unused.map((n) => memberChip(n, { draggable: true })).join("");
     document.getElementById("unused-empty").classList.toggle("hidden", state.unused.length > 0);
   }
 
@@ -1062,13 +982,13 @@
       return '<button type="button" class="slot is-bye" disabled>미정</button>';
     }
     const winner = match.winner === teamId ? " is-winner" : "";
-    const members = team.members.map((n) => (n === team.ace ? "★" + n : n)).join(", ");
+    const members = team.members.join(", ");
     const disabled = match.bye || !match.a || !match.b ? " disabled" : "";
     return (
       '<button type="button" class="slot' + winner + '"' + disabled +
       ' data-win-round="' + roundIndex + '" data-win-match="' + matchIndex + '" data-win-team="' + team.id + '">' +
       escapeHtml(team.name) +
-      '<small><span class="ace-mark">ACE ' + escapeHtml(team.ace) + "</span> · " + escapeHtml(members) + "</small>" +
+      '<small>' + escapeHtml(members) + "</small>" +
       "</button>"
     );
   }
@@ -1086,9 +1006,6 @@
 
     if (state.teams.length < 2) {
       banner.textContent = "팀이 2개 이상일 때 대진표를 만들 수 있습니다.";
-      banner.className = "banner warn";
-    } else if (teamsStale()) {
-      banner.textContent = "에이스가 바뀌었습니다. 팀부터 다시 하세요.";
       banner.className = "banner warn";
     } else if (!state.bracket) {
       banner.textContent = "";
@@ -1135,7 +1052,7 @@
     const team = cid ? teamById(cid) : null;
     if (team) {
       champ.classList.remove("hidden");
-      champ.innerHTML = "우승<br /><strong>" + escapeHtml(team.name) + "</strong><br />에이스 " + escapeHtml(team.ace);
+      champ.innerHTML = "우승<br /><strong>" + escapeHtml(team.name) + "</strong>";
     } else {
       champ.classList.add("hidden");
       champ.innerHTML = "";
@@ -1147,7 +1064,7 @@
       const selected = team.id === selectedId ? " selected" : "";
       const disabled = team.id === lockedId ? " disabled" : "";
       return '<option value="' + escapeHtml(team.id) + '"' + selected + disabled + ">" +
-        escapeHtml(team.name) + " · ACE " + escapeHtml(team.ace) + "</option>";
+        escapeHtml(team.name) + "</option>";
     }).join("");
   }
 
@@ -1160,14 +1077,11 @@
     const dots = Array.from({ length: derived.need }, (_, i) => {
       return '<span class="sb-dot' + (i < gamesWon ? " is-on" : "") + '"></span>';
     }).join("");
-    const members = info.members.length
-      ? info.members.map((n) => (n === info.ace ? "★" + n : n)).join(", ")
-      : "";
+    const members = info.members.length ? info.members.join(", ") : "";
     return (
       '<article class="sb-side' + (serving ? " is-serving" : "") + (won ? " is-winner" : "") + '">' +
       '<span class="sb-serve">' + (won ? "승리" : serving ? "서브" : "대기") + "</span>" +
       '<h3 class="sb-team-name">' + escapeHtml(info.name) + "</h3>" +
-      (info.ace ? '<div class="sb-ace">★ 에이스 ' + escapeHtml(info.ace) + "</div>" : "") +
       (members ? '<div class="sb-members">' + escapeHtml(members) + "</div>" : "") +
       '<div class="sb-score">' + score + "</div>" +
       '<div class="sb-games" aria-label="게임 스코어">' + dots + "</div>" +
@@ -1213,11 +1127,11 @@
       setup.innerHTML =
         '<div class="sb-linked"><span>대진표 · ' + escapeHtml(title) + "</span><span>연결됨</span></div>" +
         '<div class="sb-setup-grid">' +
-        '<div class="sb-setup-side"><label>왼쪽</label><div class="ace-row"><span class="ace-star">★</span>' +
-        escapeHtml(a.name) + (a.ace ? " · " + escapeHtml(a.ace) : "") + "</div></div>" +
+        '<div class="sb-setup-side"><label>왼쪽</label><div class="sb-linked-name">' +
+        escapeHtml(a.name) + "</div></div>" +
         '<div class="sb-setup-vs">VS</div>' +
-        '<div class="sb-setup-side"><label>오른쪽</label><div class="ace-row"><span class="ace-star">★</span>' +
-        escapeHtml(b.name) + (b.ace ? " · " + escapeHtml(b.ace) : "") + "</div></div>" +
+        '<div class="sb-setup-side"><label>오른쪽</label><div class="sb-linked-name">' +
+        escapeHtml(b.name) + "</div></div>" +
         "</div>";
     } else {
       const customA = !board.teamA;
@@ -1277,7 +1191,6 @@
     renderNav();
     renderStats();
     renderMembers();
-    renderAces();
     renderTeams();
     renderBracket();
     renderScoreboard();
@@ -1303,11 +1216,6 @@
       const remove = e.target.closest("[data-remove]");
       if (remove) {
         removeExtra(remove.dataset.remove);
-        return;
-      }
-      const aceChip = e.target.closest("#ace-list [data-name]");
-      if (aceChip && !e.target.matches("input")) {
-        toggleAce(aceChip.dataset.name);
         return;
       }
       const sbOpen = e.target.closest("[data-sb-open-round]");
@@ -1341,17 +1249,8 @@
         return;
       }
       const chip = e.target.closest("[data-name]");
-      if (chip && state.step === 3 && !e.target.closest("[data-ace]") && !e.target.closest("[data-remove]")) {
+      if (chip && state.step === 2 && !e.target.closest("[data-remove]")) {
         onMemberClick(chip.dataset.name);
-      }
-    });
-
-    document.body.addEventListener("change", (e) => {
-      if (e.target.matches("[data-ace]")) {
-        const name = e.target.dataset.ace;
-        const want = e.target.checked;
-        const has = state.aces.includes(name);
-        if (want !== has) toggleAce(name);
       }
     });
 
@@ -1401,15 +1300,15 @@
       if (name && target) moveMember(name, target);
     });
 
-    document.getElementById("gen-teams-btn").addEventListener("click", () => generateTeams(state.teams.length > 0));
+    document.getElementById("gen-teams-btn").addEventListener("click", generateTeams);
     document.getElementById("solo-leftover-btn").addEventListener("click", promoteLeftovers);
     document.getElementById("gen-bracket-btn").addEventListener("click", () => buildBracket());
     document.getElementById("reset-winners-btn").addEventListener("click", resetWinners);
     document.getElementById("print-btn").addEventListener("click", () => {
-      setStep(4);
+      setStep(3);
       window.print();
     });
-    document.getElementById("open-scoreboard-btn").addEventListener("click", () => setStep(5));
+    document.getElementById("open-scoreboard-btn").addEventListener("click", () => setStep(4));
     document.getElementById("sb-format").addEventListener("change", (e) => {
       setBoardFormat(Number(e.target.value));
     });
@@ -1420,7 +1319,7 @@
     document.getElementById("sb-apply-winner").addEventListener("click", applyWinnerToBracket);
 
     document.addEventListener("keydown", (e) => {
-      if (state.step !== 5) return;
+      if (state.step !== 4) return;
       if (e.target.closest("input, select, textarea")) return;
       const key = e.key;
       if (key === "a" || key === "A" || key === "ArrowLeft" || key === "1") {
@@ -1442,12 +1341,13 @@
     });
 
     window.addEventListener("beforeprint", () => {
-      state.step = 4;
+      state.step = 3;
       render();
     });
   }
 
   load();
+  save();
   bind();
   render();
 })();
