@@ -8,6 +8,7 @@
   ];
 
   const STORAGE_KEY = "pingpong-bracket-v1";
+  const TEAM_SIZE = 2;
   const MAX_TEAM = 3;
   const GAME_POINT = 11;
   const RETIRED_NAMES = ["임"];
@@ -399,20 +400,26 @@
     }
 
     const shuffled = shuffle(members);
-    const teamCount = Math.ceil(shuffled.length / MAX_TEAM);
-    const extraEach = Math.floor(shuffled.length / teamCount);
-    const bonus = shuffled.length % teamCount;
     const teams = [];
-    let idx = 0;
-    for (let i = 0; i < teamCount; i++) {
-      const take = extraEach + (i < bonus ? 1 : 0);
-      const group = shuffled.slice(idx, idx + take);
-      idx += take;
+    for (let i = 0; i + 1 < shuffled.length; i += TEAM_SIZE) {
+      const group = shuffled.slice(i, i + TEAM_SIZE);
       teams.push({
         id: uid(),
         name: group[0] + " 팀",
         members: group
       });
+    }
+    if (shuffled.length % TEAM_SIZE === 1) {
+      const leftover = shuffled[shuffled.length - 1];
+      if (!teams.length) {
+        teams.push({
+          id: uid(),
+          name: leftover + " 팀",
+          members: [leftover]
+        });
+      } else {
+        teams[randomInt(teams.length)].members.push(leftover);
+      }
     }
 
     state.teams = shuffle(teams);
@@ -516,7 +523,7 @@
     }
     const oversize = state.teams.some((t) => t.members.length < 1 || t.members.length > MAX_TEAM);
     if (oversize) {
-      toast("팀 인원은 1~3명이어야 합니다.", "warn");
+      toast("한 팀은 최대 3명입니다.", "warn");
       return;
     }
 
